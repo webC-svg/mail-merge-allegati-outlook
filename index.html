@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mail Merge Allegati Diversi - Outlook</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+:root{--outlook:#0078D4;--outlook-light:#e5f1fb}
+body{font-family:Inter,system-ui,Segoe UI,Roboto,sans-serif;background:#f6f7fb}
+</style>
+</head>
+<body class="min-h-screen">
+<div class="max-w-5xl mx-auto p-6">
+  <header class="bg-white rounded-2xl border p-6 flex justify-between items-center">
+    <div><h1 class="text-xl font-bold">📎 Mail Merge - Allegati Diversi per Outlook</h1><p class="text-sm text-gray-500 mt-1">Genera EML pronti da trascinare in Bozze. 100% locale.</p></div>
+    <a href="https://github.com" class="text-xs bg-gray-900 text-white px-3 py-2 rounded-lg">GitHub</a>
+  </header>
+
+  <div class="grid md:grid-cols-2 gap-6 mt-6">
+    <div class="bg-white rounded-2xl border p-5">
+      <h2 class="font-semibold">1. Destinatari</h2>
+      <p class="text-xs text-gray-500 mt-1">Incolla lista: una per riga, formato Email, Nome oppure Email - Nome</p>
+      <textarea id="recipientsInput" class="mt-3 w-full h-40 border rounded-xl p-3 text-sm font-mono" placeholder="mario.rossi@email.com, Mario Rossi
+laura.bianchi@email.com, Laura Bianchi"></textarea>
+      <div class="mt-3 flex gap-2">
+        <button onclick="parseRecipients()" class="bg-[#0078D4] text-white px-4 py-2 rounded-lg text-sm font-medium">Carica lista</button>
+        <input type="file" id="csvFile" accept=".csv,.txt" class="hidden" onchange="loadCSV(event)">
+        <button onclick="document.getElementById('csvFile').click()" class="border px-4 py-2 rounded-lg text-sm">Carica CSV</button>
+      </div>
+      <div id="recipientsPreview" class="mt-4 text-xs"></div>
+    </div>
+
+    <div class="bg-white rounded-2xl border p-5">
+      <h2 class="font-semibold">2. Allegati diversi</h2>
+      <div id="dropzone" class="mt-3 border-2 border-dashed rounded-xl p-6 text-center text-sm text-gray-500 cursor-pointer">
+        Trascina qui i file (PDF, DOCX...) o clicca per selezionare
+        <input type="file" id="filesInput" multiple class="hidden">
+      </div>
+      <div id="filesList" class="mt-3 space-y-1 text-xs"></div>
+      <div class="mt-4">
+        <label class="text-xs font-medium">Mappatura</label>
+        <div id="mapping" class="mt-2 space-y-2 max-h-60 overflow-auto"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="bg-white rounded-2xl border p-5 mt-6">
+    <h2 class="font-semibold">3. Messaggio</h2>
+    <div class="grid md:grid-cols-2 gap-4 mt-3">
+      <div>
+        <label class="text-xs font-medium">Mittente</label>
+        <input id="fromName" class="w-full border rounded-lg p-2 text-sm mt-1" placeholder="Il tuo nome">
+        <label class="text-xs font-medium mt-3 block">Oggetto (usa {{nome}})</label>
+        <input id="subject" class="w-full border rounded-lg p-2 text-sm mt-1" value="Documento per {{nome}}">
+        <label class="text-xs font-medium mt-3 block">Corpo ({{nome}}, {{email}}, {{azienda}})</label>
+        <textarea id="body" class="w-full border rounded-lg p-2 text-sm mt-1 h-32">Ciao {{nome}},
+
+ti invio in allegato il tuo documento.
+
+A presto</textarea>
+      </div>
+      <div>
+        <label class="text-xs font-medium">Anteprima per</label>
+        <select id="previewSelect" class="w-full border rounded-lg p-2 text-sm mt-1"></select>
+        <div id="preview" class="mt-3 border rounded-xl p-3 text-sm bg-gray-50 min-h-[160px] whitespace-pre-wrap"></div>
+      </div>
+    </div>
+    <div class="mt-6 flex gap-3">
+      <button onclick="generateEML()" class="bg-gray-900 text-white px-6 py-3 rounded-xl text-sm font-medium">⬇️ Genera ZIP di .EML per Outlook</button>
+      <span id="status" class="text-xs text-gray-500 self-center"></span>
+    </div>
+  </div>
+
+  <div class="bg-[#0f172a] text-white rounded-2xl p-5 mt-6 text-xs leading-relaxed">
+    <b>Come usare in Outlook:</b> 1) Estrai ZIP 2) Apri Outlook > Bozze 3) Trascina gli EML dentro Bozze 4) Invia tutto. Compatibile Outlook 2016+, 365.
+  </div>
+</div>
+
+<script>
+let recipients = [];
+let attachments = [];
+let mapping = {};
+
+const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function parseRecipients(){
+  const text = document.getElementById('recipientsInput').value;
+  const lines = text.split('\n').map(l=>l.trim()).filter(Boolean);
+  recipients = lines.map((line,i)=>{
+    let email='', nome='';
+    if(line.includes(',')){
+      const p=line.split(',').map(s=>s.trim());
+      const em=p.find(x=>emailRegex.test(x));
+      if(em){ email=em; nome=p.find(x=>x!==em)||''; } else { email=p[0]; nome=p[1]||''; }
+    } else if(line.includes(';')){
+      const p=line.split(';').map(s=>s.trim()); email=p[0]; nome=p[1]||'';
+    } else if(emailRegex.test(line)){ email=line; }
+    else { const m=line.match(/^(.*)<(.+)>$/); if(m){ nome=m[1].trim(); email=m[2].trim(); } else email=line; }
+    return {id:'r'+i, email:email.toLowerCase(), nome, valid:emailRegex.test(email)};
+  }).filter(r=>r.email);
+  renderRecipients();
+}
+
+function loadCSV(e){
+  const file=e.target.files[0]; if(!file) return;
+  const reader=new FileReader();
+  reader.onload=()=>{
+    document.getElementById('recipientsInput').value=reader.result;
+    parseRecipients();
+  };
+  reader.readAsText(file);
+}
+
+function renderRecipients(){
+  const div=document.getElementById('recipientsPreview');
+  div.innerHTML = `<div class="font-medium mb-1">${recipients.length} destinatari</div>` + recipients.map(r=>`<div class="${r.valid?'':'text-red-500'}">• ${r.nome||'(senza nome)'} &lt;${r.email}&gt;</div>`).join('');
+  const sel=document.getElementById('previewSelect');
+  sel.innerHTML = recipients.map(r=>`<option value="${r.id}">${r.nome||r.email}</option>`).join('');
+  sel.onchange = updatePreview;
+  autoMap();
+  renderMapping();
+  updatePreview();
+}
+
+const dropzone=document.getElementById('dropzone');
+const filesInput=document.getElementById('filesInput');
+dropzone.onclick=()=>filesInput.click();
+dropzone.ondragover=(e)=>{e.preventDefault(); dropzone.classList.add('bg-blue-50')};
+dropzone.ondragleave=()=>dropzone.classList.remove('bg-blue-50');
+dropzone.ondrop=(e)=>{e.preventDefault(); dropzone.classList.remove('bg-blue-50'); handleFiles(e.dataTransfer.files)};
+filesInput.onchange=(e)=>handleFiles(e.target.files);
+
+function handleFiles(fileList){
+  for(const f of fileList){
+    attachments.push({id:'a'+Math.random().toString(36).slice(2,7), name:f.name, size:f.size, file:f});
+  }
+  renderFiles();
+  autoMap();
+  renderMapping();
+}
+
+function renderFiles(){
+  const div=document.getElementById('filesList');
+  div.innerHTML = attachments.map(a=>`<div class="flex justify-between bg-gray-50 border rounded-lg px-3 py-2"><span>📎 ${a.name} (${(a.size/1024).toFixed(1)} KB)</span><button onclick="removeFile('${a.id}')" class="text-red-500">✕</button></div>`).join('');
+}
+function removeFile(id){
+  attachments=attachments.filter(a=>a.id!==id);
+  renderFiles(); renderMapping();
+}
+
+function autoMap(){
+  mapping={};
+  if(recipients.length===0 || attachments.length===0) return;
+  if(recipients.length===attachments.length){
+    recipients.forEach((r,i)=>mapping[r.id]=[attachments[i].id]);
+  } else {
+    // smart by name
+    recipients.forEach(r=>{
+      const needle=(r.nome||'').toLowerCase().split(' ')[0];
+      const found=attachments.find(a=>a.name.toLowerCase().includes(needle));
+      mapping[r.id]= found ? [found.id] : [];
+    });
+  }
+}
+
+function renderMapping(){
+  const div=document.getElementById('mapping');
+  if(recipients.length===0){ div.innerHTML='<span class="text-gray-400">Carica prima destinatari</span>'; return; }
+  div.innerHTML = recipients.map(r=>{
+    const opts = attachments.map(a=>`<option value="${a.id}" ${mapping[r.id]?.includes(a.id)?'selected':''}>${a.name}</option>`).join('');
+    return `<div class="flex gap-2 items-center text-xs"><span class="w-32 truncate">${r.nome||r.email}</span><select onchange="setMap('${r.id}', this.value)" class="flex-1 border rounded-lg p-1"><option value="">-- nessun allegato --</option>${opts}</select></div>`;
+  }).join('');
+}
+function setMap(rid, aid){
+  mapping[rid]= aid ? [aid] : [];
+  updatePreview();
+}
+
+function replacePlaceholders(tpl, r){
+  return tpl.replaceAll('{{nome}}', r.nome||'').replaceAll('{{email}}', r.email||'').replaceAll('{{azienda}}', r.azienda||'').replaceAll('{{Nome}}', r.nome||'');
+}
+
+function updatePreview(){
+  const sel=document.getElementById('previewSelect');
+  if(!sel.value) return;
+  const r=recipients.find(x=>x.id===sel.value);
+  if(!r) return;
+  const subj=replacePlaceholders(document.getElementById('subject').value, r);
+  const body=replacePlaceholders(document.getElementById('body').value, r);
+  document.getElementById('preview').textContent = `Oggetto: ${subj}\n\n${body}\n\n[Allegato: ${(mapping[r.id]||[]).map(id=>attachments.find(a=>a.id===id)?.name).join(', ')||'nessuno'}]`;
+}
+
+document.getElementById('subject').addEventListener('input', updatePreview);
+document.getElementById('body').addEventListener('input', updatePreview);
+
+async function fileToBase64(file){
+  return new Promise((res,rej)=>{
+    const reader=new FileReader();
+    reader.onload=()=>res(reader.result.split(',')[1]);
+    reader.onerror=rej;
+    reader.readAsDataURL(file);
+  });
+}
+
+async function generateEML(){
+  if(recipients.length===0){ alert('Carica destinatari'); return; }
+  if(attachments.length===0){ alert('Carica allegati'); return; }
+  const status=document.getElementById('status');
+  status.textContent='Generazione in corso...';
+  const fromName=document.getElementById('fromName').value||'';
+  const subjectTpl=document.getElementById('subject').value;
+  const bodyTpl=document.getElementById('body').value;
+  const zip=new JSZip();
+  const boundary='----=_Part_'+Math.random().toString(36).slice(2);
+  for(let i=0;i<recipients.length;i++){
+    const r=recipients[i];
+    if(!r.valid) continue;
+    const subject=replacePlaceholders(subjectTpl, r);
+    const body=replacePlaceholders(bodyTpl, r);
+    const aids=mapping[r.id]||[];
+    let eml='';
+    eml+=`From: ${fromName}\r\n`;
+    eml+=`To: ${r.nome?r.nome+' ':''}<${r.email}>\r\n`;
+    eml+=`Subject: ${subject}\r\n`;
+    eml+=`Date: ${new Date().toUTCString()}\r\n`;
+    eml+=`MIME-Version: 1.0\r\n`;
+    eml+=`Content-Type: multipart/mixed; boundary="${boundary}"\r\n\r\n`;
+    eml+=`--${boundary}\r\n`;
+    eml+=`Content-Type: text/plain; charset="utf-8"\r\n`;
+    eml+=`Content-Transfer-Encoding: 7bit\r\n\r\n`;
+    eml+=`${body}\r\n\r\n`;
+    for(const aid of aids){
+      const att=attachments.find(a=>a.id===aid);
+      if(!att) continue;
+      const b64=await fileToBase64(att.file);
+      eml+=`--${boundary}\r\n`;
+      eml+=`Content-Type: application/octet-stream; name="${att.name}"\r\n`;
+      eml+=`Content-Transfer-Encoding: base64\r\n`;
+      eml+=`Content-Disposition: attachment; filename="${att.name}"\r\n\r\n`;
+      eml+=`${b64.match(/.{1,76}/g).join('\r\n')}\r\n\r\n`;
+    }
+    eml+=`--${boundary}--\r\n`;
+    const safeName=(r.nome||r.email).replace(/[^a-z0-9]/gi,'_');
+    zip.file(`${i+1}_${safeName}.eml`, eml);
+    status.textContent=`${i+1}/${recipients.length} generati...`;
+    await new Promise(r=>setTimeout(r,10));
+  }
+  const blob=await zip.generateAsync({type:'blob'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url; a.download='eml_per_outlook.zip'; a.click();
+  URL.revokeObjectURL(url);
+  status.textContent='✅ ZIP scaricato! Trascina gli EML in Outlook > Bozze';
+}
+</script>
+</body>
+</html>
